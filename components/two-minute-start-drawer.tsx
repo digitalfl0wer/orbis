@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Clock, Battery, Target, RotateCcw, Minimize2, X, Timer } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useNeetCodeLevel } from "@/hooks/use-neetcode-level"
 
 interface TwoMinuteStartDrawerProps {
   isOpen: boolean
@@ -23,6 +24,7 @@ export function TwoMinuteStartDrawer({ isOpen, onClose, onMinimize, isMinimized 
   const [energyLevel, setEnergyLevel] = useState<EnergyLevel>("ok")
   const [patternFocus, setPatternFocus] = useState<PatternFocus>("focus")
   const [recall, setRecall] = useState("")
+  const [neetCodeLevel, setNeetCodeLevel] = useNeetCodeLevel()
   const containerRef = useRef<HTMLDivElement | null>(null)
 
   // Session memory - remember minimized state
@@ -173,6 +175,22 @@ export function TwoMinuteStartDrawer({ isOpen, onClose, onMinimize, isMinimized 
         </CardHeader>
 
         <CardContent className="space-y-6">
+          <div className="space-y-2">
+            <span className="text-xs font-semibold uppercase tracking-[0.4em] text-muted-foreground">Curriculum level</span>
+            <div className="flex gap-2">
+              {["beginner", "intermediate", "advanced"].map((level) => (
+                <Button
+                  key={level}
+                  variant={neetCodeLevel === level ? "secondary" : "ghost"}
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => setNeetCodeLevel(level as any)}
+                >
+                  {level[0].toUpperCase() + level.slice(1)}
+                </Button>
+              ))}
+            </div>
+          </div>
           {/* Time Selection */}
           <div className="space-y-3">
             <div className="flex items-center gap-2">

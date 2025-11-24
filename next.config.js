@@ -7,8 +7,8 @@ const nextConfig = {
       "'self'",
       "'unsafe-inline'",
       'blob:',
-      // Allow eval in dev and for web worker sandbox; tightened elsewhere
-      ...(isDev ? ["'unsafe-eval'", 'wasm-unsafe-eval'] : ["'unsafe-eval'"]),
+      // Allow eval only in dev; worker scripts rely on blob + worker-src
+      ...(isDev ? ["'unsafe-eval'", 'wasm-unsafe-eval'] : []),
     ].join(' ')
 
     const csp = [

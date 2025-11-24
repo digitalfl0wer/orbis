@@ -16,6 +16,8 @@ import { getProblemById } from "@/lib/db"
 import { getHints as getHintsRemote, getTotalHelp as getTotalHelpRemote } from "@/lib/aiClient"
 import { getFavoriteByProblemId, putFavorite, deleteFavorite } from "@/lib/db"
 import { ChatPanel } from "./chat-panel"
+import { startNeetCodeChallenge } from "@/lib/neetCodeStart"
+import { useNeetCodeLevel } from "@/hooks/use-neetcode-level"
 
 interface TodayScreenProps {
   isFocusMode: boolean
@@ -36,6 +38,8 @@ export function TodayScreen({ isFocusMode }: TodayScreenProps) {
   const [aiError, setAiError] = useState<string | null>(null)
   const [aiHints, setAiHints] = useState<{ nudge: string; strategy: string; specific: string } | null>(null)
   const [aiTotalHelp, setAiTotalHelp] = useState<any>(null)
+  const [isStartingChallenge, setIsStartingChallenge] = useState(false)
+  const [startMessage, setStartMessage] = useState<string | null>(null)
   
   // Scheduling system
   const { rateProblem, getTimeUntilDue } = useScheduling()
@@ -131,6 +135,29 @@ export function TodayScreen({ isFocusMode }: TodayScreenProps) {
   const constraintsList = constraintsText.split(/;|\n/).map((s) => s.trim()).filter(Boolean)
   const examplesList = examplesText.split(/\n/).map((s) => s.trim()).filter(Boolean)
 
+  const [neetCodeLevel, setNeetCodeLevel] = useNeetCodeLevel()
+  const handleStartChallenge = async () => {
+    setIsStartingChallenge(true)
+    setStartMessage(null)
+    try {
+      const { id, total, fallback } = await startNeetCodeChallenge(neetCodeLevel)
+      setCurrentProblemId(id)
+      setCode(DEFAULT_CODE)
+      setStars(0)
+      setIsFavorited(false)
+      setStartMessage(
+        fallback
+          ? "Offline mode: using a cached problem. Keep solving!"
+          : `Loaded ${neetCodeLevel} challenge (1/${total}).`
+      )
+    } catch (error) {
+      console.error("Failed to start today's challenge", error)
+      setStartMessage("Unable to load today’s challenge. Try again in a moment.")
+    } finally {
+      setIsStartingChallenge(false)
+    }
+  }
+
   return (
     <div className="h-full flex">
       <div className={cn("flex-1 flex flex-col bg-background transition-layout", isFocusMode ? "p-4" : "p-6")}>
@@ -146,6 +173,32 @@ export function TodayScreen({ isFocusMode }: TodayScreenProps) {
               >
                 Day 42
               </Badge>
+              <div className="flex items-center gap-1">
+                {["beginner", "intermediate", "advanced"].map((level) => (
+                  <Button
+                    key={level}
+                    variant={neetCodeLevel === level ? "secondary" : "ghost"}
+                    size="sm"
+                    className="px-3"
+                    onClick={() => setNeetCodeLevel(level as any)}
+                  >
+                    {level[0].toUpperCase() + level.slice(1)}
+                  </Button>
+                ))}
+              </div>
+              <div className="flex flex-col gap-1">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={isStartingChallenge}
+                  onClick={handleStartChallenge}
+                >
+                  {isStartingChallenge ? "Starting…" : "Start today’s challenge"}
+                </Button>
+                <span className="text-xs text-muted-foreground" aria-live="polite">
+                  {startMessage}
+                </span>
+              </div>
               {isFocusMode && (
                 <Button
                   variant="ghost"

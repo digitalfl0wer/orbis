@@ -34,88 +34,119 @@ export function useCodeRunner() {
   const [isRunning, setIsRunning] = useState(false)
   const [result, setResult] = useState<RunResult | null>(null)
   const workerRef = useRef<Worker | null>(null)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const initializeWorker = useCallback(() => {
-    if (workerRef.current) {
-      workerRef.current.terminate()
+  const cleanupWorker = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
     }
 
-    workerRef.current = new Worker('/sandbox-worker.js')
-    
-    workerRef.current.onmessage = (e) => {
-      const { type, ...data } = e.data
-
-      switch (type) {
-        case 'result':
-          setResult(data as RunResult)
-          setIsRunning(false)
-          break
-        case 'error':
-        case 'timeout':
-          setResult({
-            success: false,
-            error: data.message,
-            consoleOutput: [],
-            testResults: []
-          })
-          setIsRunning(false)
-          break
-        case 'stopped':
-          setIsRunning(false)
-          break
-      }
-    }
-
-    workerRef.current.onerror = (error) => {
-      setResult({
-        success: false,
-        error: 'Worker error: ' + error.message,
-        consoleOutput: [],
-        testResults: []
-      })
-      setIsRunning(false)
-    }
-  }, [])
-
-  const runCode = useCallback((code: string, tests: TestCase[], timeout = 5000) => {
-    if (isRunning) {
-      return
-    }
-
-    if (!workerRef.current) {
-      initializeWorker()
-    }
-
-    setIsRunning(true)
-    setResult(null)
-
-    workerRef.current?.postMessage({
-      type: 'run',
-      code,
-      tests,
-      timeout
-    })
-  }, [isRunning, initializeWorker])
-
-  const stopExecution = useCallback(() => {
-    if (workerRef.current && isRunning) {
-      workerRef.current.postMessage({ type: 'stop' })
-    }
-  }, [isRunning])
-
-  const cleanup = useCallback(() => {
     if (workerRef.current) {
       workerRef.current.terminate()
       workerRef.current = null
     }
   }, [])
 
+  const handleResult = useCallback(
+    (payload: RunResult) => {
+      cleanupWorker()
+      setResult(payload)
+      setIsRunning(false)
+    },
+    [cleanupWorker]
+  )
+
+  const handleFailure = useCallback(
+    (message: string) => {
+      cleanupWorker()
+      setResult({
+        success: false,
+        error: message,
+        consoleOutput: [],
+        testResults: [],
+      })
+      setIsRunning(false)
+    },
+    [cleanupWorker]
+  )
+
+  const initializeWorker = useCallback(() => {
+    cleanupWorker()
+  }, [cleanupWorker])
+
+  const runCode = useCallback(
+    (code: string, tests: TestCase[], timeout = 5000) => {
+      if (isRunning) {
+        return
+      }
+
+      cleanupWorker()
+
+      const worker = new Worker('/sandbox-worker.js')
+      workerRef.current = worker
+
+      setIsRunning(true)
+      setResult(null)
+
+      worker.onmessage = (e) => {
+        const { type, ...data } = e.data
+
+        if (type === 'result') {
+          handleResult(data as RunResult)
+          return
+        }
+
+        if (type === 'error' || type === 'timeout') {
+          handleFailure(data.message)
+          return
+        }
+
+        if (type === 'stopped') {
+          cleanupWorker()
+          setIsRunning(false)
+        }
+      }
+
+      worker.onerror = (error) => {
+        handleFailure('Worker error: ' + error.message)
+      }
+
+      worker.postMessage({
+        type: 'run',
+        code,
+        tests,
+        timeout,
+      })
+
+      timeoutRef.current = setTimeout(() => {
+        handleFailure('Code execution timed out')
+      }, timeout)
+    },
+    [cleanupWorker, handleFailure, handleResult, isRunning]
+  )
+
+  const stopExecution = useCallback(() => {
+    if (!isRunning) {
+      return
+    }
+
+    cleanupWorker()
+    setResult({
+      success: false,
+      error: 'Execution stopped',
+      consoleOutput: [],
+      testResults: [],
+    })
+    setIsRunning(false)
+  }, [cleanupWorker, isRunning])
+
   return {
     isRunning,
     result,
     runCode,
     stopExecution,
-    cleanup,
-    initializeWorker
+    cleanup: cleanupWorker,
+    initializeWorker,
   }
 }

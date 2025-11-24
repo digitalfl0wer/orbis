@@ -1,35 +1,48 @@
 import { generateHintLadder, generateTotalHelp, extractProblemFields } from "@/lib/ai"
 
+type GeminiResponse<T> = {
+  ok: boolean
+  data?: T
+  error?: string
+  details?: unknown
+}
+
+async function callGemini<T>(url: string, payload: object): Promise<T> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+  const data: GeminiResponse<T> = await res.json()
+  if (!res.ok || !data?.ok || !data.data) {
+    throw new Error(data?.error || "Gemini request failed")
+  }
+  return data.data
+}
+
 export async function getHints(problemPrompt: string) {
   try {
-    const res = await fetch("/api/gemini", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task: "hints", prompt: problemPrompt }),
-    })
-    const data = await res.json()
-    if (res.ok && data?.data) {
-      return {
-        nudge: data.data.nudge,
-        strategy: data.data.strategy,
-        specific: data.data.specific,
-      }
-    }
-  } catch {}
-  return generateHintLadder(problemPrompt)
+    return await callGemini<{ nudge: string; strategy: string; specific: string }>(
+      "/api/gemini/hint",
+      { problemPrompt }
+    )
+  } catch {
+    return generateHintLadder(problemPrompt)
+  }
 }
 
 export async function getTotalHelp(problemPrompt: string) {
   try {
-    const res = await fetch("/api/gemini", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task: "totalHelp", prompt: problemPrompt }),
-    })
-    const data = await res.json()
-    if (res.ok && data?.data) return data.data
-  } catch {}
-  return generateTotalHelp(problemPrompt)
+    return await callGemini<{
+      eli5: string
+      practical: string
+      technical: string
+      edgeCases: string[]
+      minimalTests: { input: any[]; expected: any; note?: string }[]
+    }>("/api/gemini/explain", { problemPrompt })
+  } catch {
+    return generateTotalHelp(problemPrompt)
+  }
 }
 
 export async function extractProblem(input: string) {

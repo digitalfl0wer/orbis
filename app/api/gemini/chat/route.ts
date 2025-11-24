@@ -1,78 +1,122 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextRequest } from "next/server"
+import { randomUUID } from "crypto"
 import { getClientAndModel } from "@/lib/server/genai"
+import { guardrails } from "@/lib/server/guardrails"
+import { z } from "zod"
+import { makeApiResponse, parseAIResponse } from "@/lib/server/apiResponse"
+import { generateGeminiCompletion } from "@/lib/server/gemini"
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-}
+const chatRequestSchema = z.object({
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string().min(1).max(3000),
+      })
+    )
+    .min(1)
+    .max(20),
+  problemContext: z.string().max(4000).optional(),
+  assistanceLevel: z.enum(['Review', 'Guidance', 'Total Help']).default('Guidance'),
+  code: z.string().max(4000).optional(),
+})
 
-interface ChatRequestBody {
-  messages: ChatMessage[]
-  problemContext?: string
-  assistanceLevel?: 'Review' | 'Guidance' | 'Total Help'
-  code?: string
-}
+interface ChatRequestBody extends z.infer<typeof chatRequestSchema> {}
 
-function guardrails(level: string | undefined) {
-  switch (level) {
-    case 'Review':
-      return "Rules: No code. Provide concise analysis, complexity notes, edge cases, or extra tests only."
-    case 'Guidance':
-      return "Rules: Provide up to 3 hints (Nudge → Strategy → Specific). No full solutions. Be concise."
-    default:
-      return "Rules: Short ELI5 → Practical → Technical. Include 3 edge cases. Keep output concise."
-  }
+function buildPrompt(body: ChatRequestBody) {
+  const { messages, problemContext, assistanceLevel, code } = body
+  const system = [
+    'You are a helpful coding mentor.',
+    guardrails(assistanceLevel),
+    'If information is missing, be explicit about assumptions.',
+    'Keep responses succinct.',
+    problemContext ? `Context:\n${problemContext}` : '',
+    assistanceLevel !== 'Review' && code ? `User code (optional):\n${code}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+
+  const userTurns = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n')
+
+  return `${system}\n\nCHAT:\n${userTurns}`
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = randomUUID()
   try {
-    const body = (await req.json()) as ChatRequestBody
-    const { messages = [], problemContext = '', assistanceLevel = 'Guidance', code } = body || {}
+    const parseResult = chatRequestSchema.safeParse(await req.json())
+    if (!parseResult.success) {
+      const details = parseResult.error.flatten()
+      return makeApiResponse(
+        {
+          ok: false,
+          error: 'Invalid chat payload',
+          details,
+          status: 400,
+        },
+        requestId
+      )
+    }
 
+    const body = parseResult.data
     const { client, modelName } = getClientAndModel()
     if (!client || !modelName) {
-      return NextResponse.json({ ok: false, error: 'AI disabled: missing GOOGLE_API_KEY/GEMINI_API_KEY' }, { status: 503 })
+      return makeApiResponse(
+        {
+          ok: false,
+          error: 'AI disabled: missing GOOGLE_API_KEY/GEMINI_API_KEY',
+          status: 503,
+        },
+        requestId
+      )
     }
 
-    const system = [
-      'You are a helpful coding mentor.',
-      guardrails(assistanceLevel),
-      'If information is missing, be explicit about assumptions.',
-      'Keep responses succinct.',
-      problemContext ? `Context:\n${problemContext}` : '',
-      assistanceLevel !== 'Review' && code ? `User code (optional):\n${code}` : ''
-    ].filter(Boolean).join('\n\n')
+    const prompt = buildPrompt(body)
 
-    const userTurns = messages
-      .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
-      .join('\n\n')
-
-    const prompt = `${system}\n\nCHAT:\n${userTurns}`
-
-    let genText = ''
     try {
-      const result = await client.models.generateContent({
-        model: modelName,
-        contents: [{ role: 'user', parts: [{ text: prompt }] }] as any,
-        generationConfig: { maxOutputTokens: 512, temperature: 0.3 } as any,
-      } as any)
-      genText = (result as any).text
-    } catch (err: any) {
-      console.error('/api/gemini/chat model call failed:', err)
-      const isProd = process.env.NODE_ENV === 'production'
-      const details = isProd ? undefined : { name: err?.name, message: err?.message, stack: err?.stack?.slice(0, 2000) }
-      return NextResponse.json({ ok: false, error: err?.message || 'Model call failed', details }, { status: 503 })
-    }
+      const text = await generateGeminiCompletion(client, modelName, prompt)
+      const data = parseAIResponse(text)
 
-    const text = genText
-    return NextResponse.json({ ok: true, data: { text } })
-  } catch (e: any) {
-    console.error('/api/gemini/chat error:', e)
+      return makeApiResponse(
+        {
+          ok: true,
+          data,
+        },
+        requestId
+      )
+    } catch (err: any) {
+      const isProd = process.env.NODE_ENV === 'production'
+      console.error(`[${requestId}] /api/gemini/chat model call failed:`, err)
+      const details = isProd
+        ? undefined
+        : { name: err?.name, message: err?.message, stack: err?.stack?.slice(0, 2000) }
+      return makeApiResponse(
+        {
+          ok: false,
+          error: err?.message || 'Model call failed',
+          details,
+          status: 502,
+        },
+        requestId
+      )
+    }
+  } catch (err: any) {
     const isProd = process.env.NODE_ENV === 'production'
-    const details = isProd ? undefined : { name: e?.name, message: e?.message, stack: e?.stack?.slice(0, 2000) }
-    return NextResponse.json({ ok: false, error: e?.message || 'Chat error', details }, { status: 500 })
+    console.error(`[${requestId}] /api/gemini/chat error:`, err)
+    const details = isProd
+      ? undefined
+      : { name: err?.name, message: err?.message, stack: err?.stack?.slice(0, 2000) }
+    return makeApiResponse(
+      {
+        ok: false,
+        error: err?.message || 'Chat error',
+        details,
+        status: 500,
+      },
+      requestId
+    )
   }
 }
