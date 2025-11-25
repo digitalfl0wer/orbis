@@ -9,7 +9,7 @@ export async function generateGeminiCompletion(
   const response = await client.models.generateContent({
     model: modelName,
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: { maxOutputTokens, temperature },
+    config: { maxOutputTokens, temperature },
   })
 
   const raw = (response as any).text ?? (response as any).output_text ?? ""

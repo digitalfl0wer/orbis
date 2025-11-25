@@ -31,14 +31,16 @@ Linting & Formatting: ESLint + Prettier
 
 🚀 Deployment
 
-Deployed on Vercel.
+Deployed on Vercel. The `app` router powers both the marketing landing (`/page.tsx`) and the Orbis workspace (`/app/page.tsx`), so the default Vercel entrypoint can stay marketing-focused while `/app` hosts the interactive experience.
 
 Required environment variables (Vercel → Project Settings → Environment Variables):
 
-- GOOGLE_API_KEY or GEMINI_API_KEY
-- Optional: GEMINI_MODEL or GOOGLE_GEMINI_MODEL (default: gemini-2.5-flash)
+- `GOOGLE_API_KEY` or `GEMINI_API_KEY` (server-only)
+- Optional: `GEMINI_MODEL` or `GOOGLE_GEMINI_MODEL` (defaults to `gemini-2.5-flash`)
 
 Notes:
-- API routes under `app/api/gemini/*` return 503 if keys are missing.
-- Health check: GET `/ok` → `{ ok: true }`.
-- CSP is configured in `next.config.js` for the in-browser code runner worker.
+- `/api/gemini/*` returns `{ ok: false, error }` + `requestId` when keys are missing, so monitoring can spot misconfigurations quickly.
+- `/api/health/ai` reports `{ ok, model, keyConfigured }` for automated checks.
+- `/ok` remains a lightweight health (returns `{ ok: true }`).
+- CSP/security headers are configured in `next.config.js`; the worker for the in-browser code runner runs from `public/` with `worker-src 'self' blob:` so the main page never needs `unsafe-eval`.
+- Deploy previews can skip API keys; the UI falls back to deterministic local templates (see `lib/ai.ts`).
